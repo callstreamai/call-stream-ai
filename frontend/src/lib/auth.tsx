@@ -39,33 +39,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async (userId: string) => {
-    const { data, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", userId)
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", userId)
+        .single();
 
-    if (data && !error) {
-      setProfile(data as UserProfile);
+      if (data && !error) {
+        setProfile(data as UserProfile);
+      } else {
+        console.warn("Profile fetch failed:", error?.message);
+        setProfile(null);
+      }
+    } catch (err) {
+      console.warn("Profile fetch exception:", err);
+      setProfile(null);
     }
   }, []);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      if (s?.user) {
-        fetchProfile(s.user.id);
-      }
-      setLoading(false);
-    });
+    let mounted = true;
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, s) => {
+    const init = async () => {
+      try {
+        const { data: { session: s } } = await supabase.auth.getSession();
+        if (!mounted) return;
+
         setSession(s);
         setUser(s?.user ?? null);
+
+        if (s?.user) {
+          await fetchProfile(s.user.id);
+        }
+      } catch (err) {
+        console.warn("Auth init error:", err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    init();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, s) => {
+        if (!mounted) return;
+        setSession(s);
+        setUser(s?.user ?? null);
+
         if (s?.user) {
           await fetchProfile(s.user.id);
         } else {
@@ -75,7 +96,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [fetchProfile]);
 
   const signInWithGoogle = async () => {
