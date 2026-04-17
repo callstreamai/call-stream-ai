@@ -26,13 +26,8 @@ export default function SignInPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-[#888]">Loading...</div>
-      </div>
-    );
-  }
+  // Don't show loading spinner — show signin form immediately
+  // If user is already logged in, the useEffect redirect will fire
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center">
