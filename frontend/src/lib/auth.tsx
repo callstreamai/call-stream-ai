@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 
@@ -32,24 +32,32 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 });
 
+// Helper: race a promise against a timeout
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const initDone = useRef(false);
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", userId)
-        .single();
-
+      const { data, error } = await withTimeout(
+        supabase.from("users").select("*").eq("id", userId).single(),
+        5000,
+        { data: null, error: { message: "Profile fetch timed out" } } as any
+      );
       if (data && !error) {
         setProfile(data as UserProfile);
       } else {
-        console.warn("Profile fetch failed:", error?.message);
+        console.warn("Profile fetch issue:", error?.message);
         setProfile(null);
       }
     } catch (err) {
@@ -59,13 +67,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Prevent double-init in React strict mode
+    if (initDone.current) return;
+    initDone.current = true;
+
     let mounted = true;
+
+    // Safety net: force loading=false after 8 seconds no matter what
+    const safetyTimer = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn("Auth safety timeout — forcing loading=false");
+        setLoading(false);
+      }
+    }, 8000);
 
     const init = async () => {
       try {
-        const { data: { session: s } } = await supabase.auth.getSession();
+        const sessionResult = await withTimeout(
+          supabase.auth.getSession(),
+          5000,
+          { data: { session: null } } as any
+        );
+        
         if (!mounted) return;
 
+        const s = sessionResult?.data?.session ?? null;
         setSession(s);
         setUser(s?.user ?? null);
 
@@ -82,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, s) => {
+      async (_event, s) => {
         if (!mounted) return;
         setSession(s);
         setUser(s?.user ?? null);
@@ -98,20 +124,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false;
+      clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
-  }, [fetchProfile]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const signInWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        queryParams: {
-          hd: "callstreamai.com",
-        },
-        redirectTo: typeof window !== "undefined"
-          ? `${window.location.origin}/auth/callback`
-          : undefined,
+        queryParams: { hd: "callstreamai.com" },
+        redirectTo: `${window.location.origin}/auth/callback`,
       },
     });
     if (error) {
