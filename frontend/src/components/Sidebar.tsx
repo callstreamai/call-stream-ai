@@ -7,6 +7,7 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: "◆" },
   { href: "/clients", label: "Clients", icon: "◇" },
   { href: "/preview", label: "Preview Simulator", icon: "▶" },
+  { href: "/docs", label: "API Docs", icon: "◎" },
 ];
 
 const clientNavItems = [
