@@ -32,31 +32,45 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 });
 
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
-  ]);
+const AUTH_CACHE_KEY = "csai_auth_state";
+
+function getCachedAuth(): { hasSession: boolean; profile: UserProfile | null } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const cached = localStorage.getItem(AUTH_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch {}
+  return null;
+}
+
+function setCachedAuth(hasSession: boolean, profile: UserProfile | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (hasSession) {
+      localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify({ hasSession, profile }));
+    } else {
+      localStorage.removeItem(AUTH_CACHE_KEY);
+    }
+  } catch {}
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const cached = getCachedAuth();
+  
+  // If we have a cached session, skip the loading state entirely
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(cached?.profile ?? null);
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cached?.hasSession);
   const initDone = useRef(false);
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
-      const query = supabase.from("users").select("*").eq("id", userId).single();
-      const result = await withTimeout(
-        Promise.resolve(query),
-        5000,
-        { data: null, error: { message: "Profile fetch timed out" } } as any
-      );
+      const result = await supabase.from("users").select("*").eq("id", userId).single();
       const { data, error } = result;
       if (data && !error) {
         setProfile(data as UserProfile);
+        setCachedAuth(true, data as UserProfile);
       } else {
         console.warn("Profile fetch issue:", error?.message);
         setProfile(null);
@@ -73,32 +87,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let mounted = true;
 
+    // Safety net: force loading=false after 6 seconds
     const safetyTimer = setTimeout(() => {
-      if (mounted) {
-        console.warn("Auth safety timeout — forcing loading=false");
+      if (mounted && loading) {
+        console.warn("Auth safety timeout");
         setLoading(false);
       }
-    }, 8000);
+    }, 6000);
 
     const init = async () => {
       try {
-        const sessionResult = await withTimeout(
-          supabase.auth.getSession(),
-          5000,
-          { data: { session: null } } as any
-        );
-
+        const { data } = await supabase.auth.getSession();
         if (!mounted) return;
 
-        const s = sessionResult?.data?.session ?? null;
+        const s = data?.session ?? null;
         setSession(s);
         setUser(s?.user ?? null);
 
         if (s?.user) {
+          setCachedAuth(true, profile);
           await fetchProfile(s.user.id);
+        } else {
+          // No valid session — clear cache, will redirect to signin
+          setCachedAuth(false, null);
+          setProfile(null);
         }
       } catch (err) {
         console.warn("Auth init error:", err);
+        setCachedAuth(false, null);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -114,9 +130,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(s?.user ?? null);
 
       if (s?.user) {
+        setCachedAuth(true, profile);
         await fetchProfile(s.user.id);
       } else {
         setProfile(null);
+        setCachedAuth(false, null);
       }
       setLoading(false);
     });
@@ -147,6 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setProfile(null);
     setSession(null);
+    setCachedAuth(false, null);
   };
 
   return (
