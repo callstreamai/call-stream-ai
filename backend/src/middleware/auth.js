@@ -21,26 +21,19 @@ function runtimeAuth(req, res, next) {
   next();
 }
 
-// Admin API auth - Supabase JWT with dev mode bypass
+// Admin API auth - Supabase JWT validation
 async function adminAuth(req, res, next) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
-  
-  // Dev mode: skip auth if ADMIN_AUTH_BYPASS is set or no proper Supabase config
-  if (process.env.ADMIN_AUTH_BYPASS === 'true') {
-    req.user = { id: 'dev-user', email: 'dev@callstream.ai' };
+
+  // Demo mode bypass
+  if (process.env.DEMO_MODE === 'true') {
+    req.user = { id: 'demo-user', email: 'demo@callstream.ai' };
     return next();
   }
 
   const authHeader = req.headers.authorization;
-
-  // If no auth header, check if we should allow unauthenticated access
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    // Allow unauthenticated access in demo mode
-    if (process.env.DEMO_MODE === 'true') {
-      req.user = { id: 'demo-user', email: 'demo@callstream.ai' };
-      return next();
-    }
     return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' } });
   }
 
@@ -52,13 +45,19 @@ async function adminAuth(req, res, next) {
   }
 
   try {
+    // Create a client with the user's JWT to validate it
     const supabase = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } }
     });
 
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) {
-      return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Invalid token' } });
+      return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } });
+    }
+
+    // Enforce domain
+    if (!user.email || !user.email.endsWith('@callstreamai.com')) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Only @callstreamai.com accounts are allowed' } });
     }
 
     req.user = user;
