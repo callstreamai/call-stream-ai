@@ -7,7 +7,6 @@ function runtimeAuth(req, res, next) {
   const expectedToken = process.env.RUNTIME_API_TOKEN;
 
   if (!expectedToken) {
-    // No token configured - allow all (dev mode)
     return next();
   }
 
@@ -26,6 +25,17 @@ function runtimeAuth(req, res, next) {
 // Admin API auth - Supabase JWT
 async function adminAuth(req, res, next) {
   const authHeader = req.headers.authorization;
+  
+  // Check if Supabase is properly configured
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  
+  // Dev mode: skip auth if Supabase keys are placeholders or missing
+  if (!supabaseUrl || !anonKey || anonKey === 'PLACEHOLDER_ANON_KEY' || anonKey.startsWith('PLACEHOLDER')) {
+    req.user = { id: 'dev-user', email: 'dev@callstream.ai' };
+    return next();
+  }
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' } });
   }
@@ -33,15 +43,6 @@ async function adminAuth(req, res, next) {
   const token = authHeader.replace('Bearer ', '');
 
   try {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const anonKey = process.env.SUPABASE_ANON_KEY;
-
-    if (!supabaseUrl || !anonKey) {
-      // Dev mode - skip auth
-      req.user = { id: 'dev-user', email: 'dev@callstream.ai' };
-      return next();
-    }
-
     const supabase = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } }
     });
