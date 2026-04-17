@@ -26,6 +26,28 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', service: 'call-stream-ai', timestamp: new Date().toISOString() });
 });
 
+
+// DB health check
+app.get('/health/db', async (req, res) => {
+  try {
+    const db = require('./config/db');
+    if (!db.pool) {
+      return res.json({ status: 'error', message: 'Pool not initialized', env: {
+        hasSupabaseUrl: !!process.env.SUPABASE_URL,
+        hasDatabaseUrl: !!process.env.DATABASE_URL,
+        hasDbPassword: !!process.env.DB_PASSWORD,
+        nodeEnv: process.env.NODE_ENV
+      }});
+    }
+    const start = Date.now();
+    const result = await db.pool.query('SELECT 1 as ok');
+    const duration = Date.now() - start;
+    res.json({ status: 'ok', queryTime: duration, result: result.rows[0] });
+  } catch (err) {
+    res.json({ status: 'error', message: err.message, stack: err.stack?.substring(0, 500) });
+  }
+});
+
 // API Routes
 app.use('/api/runtime', runtimeRoutes);
 app.use('/api/admin', adminRoutes);
