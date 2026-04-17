@@ -1,4 +1,3 @@
-const { supabaseAnon, supabaseAnonKey } = require('../config/supabase');
 const { createClient } = require('@supabase/supabase-js');
 
 // Runtime API auth - token-based for Brainbase
@@ -22,25 +21,35 @@ function runtimeAuth(req, res, next) {
   next();
 }
 
-// Admin API auth - Supabase JWT
+// Admin API auth - Supabase JWT with dev mode bypass
 async function adminAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
-  
-  // Check if Supabase is properly configured
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
   
-  // Dev mode: skip auth if Supabase keys are placeholders or missing
-  if (!supabaseUrl || !anonKey || anonKey === 'PLACEHOLDER_ANON_KEY' || anonKey.startsWith('PLACEHOLDER')) {
+  // Dev mode: skip auth if ADMIN_AUTH_BYPASS is set or no proper Supabase config
+  if (process.env.ADMIN_AUTH_BYPASS === 'true') {
     req.user = { id: 'dev-user', email: 'dev@callstream.ai' };
     return next();
   }
 
+  const authHeader = req.headers.authorization;
+
+  // If no auth header, check if we should allow unauthenticated access
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // Allow unauthenticated access in demo mode
+    if (process.env.DEMO_MODE === 'true') {
+      req.user = { id: 'demo-user', email: 'demo@callstream.ai' };
+      return next();
+    }
     return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' } });
   }
 
   const token = authHeader.replace('Bearer ', '');
+
+  if (!supabaseUrl || !anonKey) {
+    req.user = { id: 'dev-user', email: 'dev@callstream.ai' };
+    return next();
+  }
 
   try {
     const supabase = createClient(supabaseUrl, anonKey, {
