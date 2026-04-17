@@ -1,4 +1,4 @@
-const { supabaseAdmin } = require('../../config/supabase');
+const db = require('../../config/db');
 const { cacheService } = require('../../services/cache');
 const { isCurrentlyOpen } = require('../../utils/hours');
 
@@ -21,228 +21,160 @@ async function resolve(req, res) {
     }
 
     // 1. Resolve deployment binding (cached)
-    const bindingKey = cacheService.buildKey(['binding', deploymentId, channel || 'voice']);
+    const effectiveChannel = channel || 'voice';
+    const bindingKey = cacheService.buildKey(['binding', deploymentId, effectiveChannel]);
     let binding = cacheService.get(bindingKey);
 
     if (!binding) {
-      const { data, error } = await supabaseAdmin
-        .from('deployment_bindings')
-        .select('*')
-        .eq('brainbase_deployment_id', deploymentId)
-        .eq('channel', channel || 'voice')
-        .eq('is_active', true)
-        .single();
+      // Try with channel filter first
+      binding = await db.queryOne(
+        `SELECT * FROM deployment_bindings
+         WHERE brainbase_deployment_id = $1 AND channel = $2 AND is_active = true
+         LIMIT 1`,
+        [deploymentId, effectiveChannel]
+      );
 
-      if (error || !data) {
+      if (!binding) {
         // Try without channel filter
-        const { data: fallbackData } = await supabaseAdmin
-          .from('deployment_bindings')
-          .select('*')
-          .eq('brainbase_deployment_id', deploymentId)
-          .eq('is_active', true)
-          .limit(1)
-          .single();
-
-        if (!fallbackData) {
-          return res.status(404).json({
-            error: { code: 'BINDING_NOT_FOUND', message: 'No deployment binding found', safeFallback: SAFE_FALLBACK }
-          });
-        }
-        binding = fallbackData;
-      } else {
-        binding = data;
+        binding = await db.queryOne(
+          `SELECT * FROM deployment_bindings
+           WHERE brainbase_deployment_id = $1 AND is_active = true
+           LIMIT 1`,
+          [deploymentId]
+        );
       }
+
+      if (!binding) {
+        return res.status(404).json({
+          error: { code: 'BINDING_NOT_FOUND', message: 'No deployment binding found', safeFallback: SAFE_FALLBACK }
+        });
+      }
+
       cacheService.set(bindingKey, binding, 300);
     }
 
     const clientId = binding.client_id;
 
-    // 2. Check deployment overrides (cached)
-    const overridesKey = cacheService.buildKey(['overrides', binding.id]);
-    let overrides = cacheService.get(overridesKey);
+    // 2. Fetch all needed data in parallel (single round-trip each)
+    const configKey = cacheService.buildKey(['resolve-config', clientId, effectiveChannel]);
+    let config = cacheService.get(configKey);
 
-    if (!overrides) {
-      const { data: overrideData } = await supabaseAdmin
-        .from('deployment_overrides')
-        .select('*')
-        .eq('deployment_binding_id', binding.id)
-        .eq('is_active', true)
-        .order('priority', { ascending: false });
+    if (!config) {
+      const [client, rules, hours, holidays, kbItems, channelOverrides] = await Promise.all([
+        db.queryOne(
+          `SELECT id, name, slug, vertical, status, timezone, settings FROM clients WHERE id = $1`,
+          [clientId]
+        ),
+        db.queryRows(
+          `SELECT department_code, intent_key, condition_type, action_type,
+                  action_label, action_value, priority, is_fallback
+           FROM routing_rules
+           WHERE client_id = $1 AND is_active = true
+           ORDER BY priority DESC`,
+          [clientId]
+        ),
+        db.queryRows(
+          `SELECT day_of_week, open_time, close_time, is_closed, timezone
+           FROM hours_of_operation WHERE client_id = $1`,
+          [clientId]
+        ),
+        db.queryRows(
+          `SELECT name, date, is_closed, open_time, close_time
+           FROM holiday_exceptions WHERE client_id = $1`,
+          [clientId]
+        ),
+        db.queryRows(
+          `SELECT category, question, answer, department_code, intent_key
+           FROM kb_items WHERE client_id = $1 AND is_active = true
+           ORDER BY priority DESC LIMIT 20`,
+          [clientId]
+        ),
+        db.queryRows(
+          `SELECT * FROM channel_overrides
+           WHERE client_id = $1 AND channel = $2 AND is_active = true`,
+          [clientId, effectiveChannel]
+        )
+      ]);
 
-      overrides = overrideData || [];
-      cacheService.set(overridesKey, overrides, 120);
+      config = { client, rules, hours, holidays, kbItems, channelOverrides };
+      cacheService.set(configKey, config, 120);
     }
 
-    // 3. Resolve routing (cached)
-    const routingKey = cacheService.buildKey(['routing', clientId, department, intent]);
-    let routingResult = cacheService.get(routingKey);
+    const { client, rules, hours, holidays, kbItems, channelOverrides } = config;
 
-    if (!routingResult) {
-      // Fetch routing rules for this client
-      let query = supabaseAdmin
-        .from('routing_rules')
-        .select('*')
-        .eq('client_id', clientId)
-        .eq('is_active', true)
-        .order('priority', { ascending: false });
-
-      const { data: rules } = await query;
-
-      // Find matching rule
-      let matchedRule = null;
-
-      if (rules && rules.length > 0) {
-        // Priority: exact dept+intent > dept only > intent only > fallback
-        if (department && intent) {
-          matchedRule = rules.find(r => r.department_code === department && r.intent_key === intent && !r.is_fallback);
-        }
-        if (!matchedRule && department) {
-          matchedRule = rules.find(r => r.department_code === department && !r.intent_key && !r.is_fallback);
-        }
-        if (!matchedRule && intent) {
-          matchedRule = rules.find(r => r.intent_key === intent && !r.department_code && !r.is_fallback);
-        }
-        if (!matchedRule) {
-          matchedRule = rules.find(r => r.is_fallback);
-        }
-      }
-
-      routingResult = matchedRule;
-      cacheService.set(routingKey, routingResult || { empty: true }, 120);
+    if (!client) {
+      return res.status(404).json({
+        error: { code: 'CLIENT_NOT_FOUND', message: 'Client not found', safeFallback: SAFE_FALLBACK }
+      });
     }
 
-    // 4. Check hours (cached)
-    let hoursStatus = { isOpen: true, reason: 'default' };
-
-    if (department) {
-      const hoursKey = cacheService.buildKey(['hours', clientId, department, timestamp || 'now']);
-      let cachedHours = cacheService.get(hoursKey);
-
-      if (!cachedHours) {
-        // Get department
-        const { data: dept } = await supabaseAdmin
-          .from('departments')
-          .select('id')
-          .eq('client_id', clientId)
-          .eq('code', department)
-          .eq('is_active', true)
-          .single();
-
-        if (dept) {
-          const { data: hours } = await supabaseAdmin
-            .from('hours_of_operation')
-            .select('*')
-            .eq('client_id', clientId)
-            .eq('department_id', dept.id);
-
-          const { data: holidays } = await supabaseAdmin
-            .from('holiday_exceptions')
-            .select('*')
-            .eq('client_id', clientId)
-            .or(`department_id.eq.${dept.id},department_id.is.null`);
-
-          const tz = hours?.[0]?.timezone || 'America/New_York';
-          cachedHours = isCurrentlyOpen(hours || [], holidays || [], timestamp, tz);
-        } else {
-          cachedHours = { isOpen: true, reason: 'department_not_found' };
-        }
-        cacheService.set(hoursKey, cachedHours, 60);
-      }
-      hoursStatus = cachedHours;
+    // 3. Route matching
+    let matchedRule = null;
+    if (department && intent) {
+      matchedRule = rules.find(r => r.department_code === department && r.intent_key === intent && !r.is_fallback);
+    }
+    if (!matchedRule && department) {
+      matchedRule = rules.find(r => r.department_code === department && !r.intent_key && !r.is_fallback);
+    }
+    if (!matchedRule && intent) {
+      matchedRule = rules.find(r => r.intent_key === intent && !r.department_code && !r.is_fallback);
+    }
+    if (!matchedRule) {
+      matchedRule = rules.find(r => r.is_fallback);
     }
 
-    // 5. Apply deployment overrides
-    let action = null;
-    let fallback = SAFE_FALLBACK;
-    let promptHints = {};
+    // 4. Check hours
+    const tz = client.timezone || hours[0]?.timezone || 'America/New_York';
+    const hoursStatus = isCurrentlyOpen(hours, holidays, timestamp, tz);
 
-    // Check routing override
-    const routingOverride = overrides.find(o => o.override_type === 'routing');
-    if (routingOverride && routingOverride.override_data) {
-      const od = routingOverride.override_data;
-      if (od.action_type) {
-        action = { type: od.action_type, label: od.action_label || '', value: od.action_value || '' };
-      }
+    // 5. Filter relevant FAQ
+    let relevantFaq = kbItems;
+    if (intent) relevantFaq = kbItems.filter(k => k.intent_key === intent);
+    else if (department) relevantFaq = kbItems.filter(k => k.department_code === department);
+    relevantFaq = relevantFaq.slice(0, 5);
+
+    // 6. Build action
+    const action = matchedRule
+      ? { type: matchedRule.action_type, label: matchedRule.action_label || '', value: matchedRule.action_value || '' }
+      : { type: 'info_response', label: 'Default', value: 'How can I help you?' };
+
+    // Apply channel overrides
+    const override = channelOverrides.find(o =>
+      (!o.department_code || o.department_code === department) &&
+      (!o.intent_key || o.intent_key === intent)
+    );
+    if (override) {
+      if (override.greeting_override) action.greeting = override.greeting_override;
+      if (override.response_override) action.value = override.response_override;
     }
 
-    // Check prompt hints override
-    const hintsOverride = overrides.find(o => o.override_type === 'prompt_hints');
-    if (hintsOverride && hintsOverride.override_data) {
-      promptHints = { ...promptHints, ...hintsOverride.override_data };
-    }
+    const responseTime = Date.now() - startTime;
 
-    // Use routing rule if no override
-    if (!action && routingResult && !routingResult.empty) {
-      // If closed, check for closed-specific routing
-      if (!hoursStatus.isOpen) {
-        const closedRule = (await (async () => {
-          const { data } = await supabaseAdmin
-            .from('routing_rules')
-            .select('*')
-            .eq('client_id', clientId)
-            .eq('condition_type', 'closed')
-            .eq('is_active', true)
-            .or(department ? `department_code.eq.${department},department_code.is.null` : 'department_code.is.null')
-            .order('priority', { ascending: false })
-            .limit(1);
-          return data?.[0];
-        })());
-
-        if (closedRule) {
-          action = { type: closedRule.action_type, label: closedRule.action_label || '', value: closedRule.action_value || '' };
-        }
-      }
-
-      if (!action) {
-        action = {
-          type: routingResult.action_type,
-          label: routingResult.action_label || '',
-          value: routingResult.action_value || ''
-        };
-      }
-
-      if (routingResult.is_fallback) {
-        fallback = { type: routingResult.action_type, label: routingResult.action_label || '', value: routingResult.action_value || '' };
-      }
-    }
-
-    // Default action if nothing matched
-    if (!action) {
-      action = SAFE_FALLBACK;
-    }
-
-    // 6. Build response
-    const response = {
-      clientId,
-      resolvedBy: 'deployment_binding',
-      channel: channel || 'voice',
-      intent: intent || null,
-      department: department || null,
-      isOpen: hoursStatus.isOpen,
-      hoursDetail: hoursStatus.reason !== 'default' ? hoursStatus : undefined,
+    res.json({
+      client: { id: client.id, name: client.name, slug: client.slug },
+      channel: effectiveChannel,
+      department,
+      intent,
       action,
-      fallback,
-      promptHints: {
-        speakBriefly: channel === 'voice',
-        confirmationStyle: 'single_confirmation_only',
-        ...promptHints
+      fallback: SAFE_FALLBACK,
+      context: {
+        isOpen: hoursStatus.isOpen,
+        currentHours: hoursStatus,
+        directory: [] // fetched separately via /:clientId/directory
       },
+      faq: relevantFaq,
+      channelOverrides: channelOverrides.length > 0,
       _meta: {
-        responseTime: Date.now() - startTime,
-        cached: false,
-        version: binding.metadata?.version || null
+        responseTime,
+        cached: !!cacheService.get(cacheService.buildKey(['resolve-config', clientId, effectiveChannel])),
+        deploymentId,
+        workerId: workerId || null
       }
-    };
-
-    res.json(response);
+    });
   } catch (err) {
     console.error('[RUNTIME] deployment-resolve error:', err);
     res.status(500).json({
-      error: {
-        code: 'RESOLVE_ERROR',
-        message: 'Failed to resolve deployment',
-        safeFallback: SAFE_FALLBACK
-      }
+      error: { code: 'RESOLVE_ERROR', message: 'Failed to resolve deployment', safeFallback: SAFE_FALLBACK }
     });
   }
 }

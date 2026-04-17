@@ -1,4 +1,4 @@
-const { supabaseAdmin } = require('../../config/supabase');
+const db = require('../../config/db');
 const { cacheService } = require('../../services/cache');
 const { isCurrentlyOpen } = require('../../utils/hours');
 
@@ -13,25 +13,21 @@ async function getDirectory(req, res) {
     let data = cacheService.get(cacheKey);
 
     if (!data) {
-      let query = supabaseAdmin
-        .from('directory_entries')
-        .select('name, phone_number, extension, email, entry_type, metadata')
-        .eq('client_id', clientId)
-        .eq('is_active', true);
+      let sql = `
+        SELECT de.name, de.phone_number, de.extension, de.email, de.entry_type, de.metadata
+        FROM directory_entries de
+        WHERE de.client_id = $1 AND de.is_active = true
+      `;
+      const params = [clientId];
 
       if (department) {
-        const { data: dept } = await supabaseAdmin
-          .from('departments')
-          .select('id')
-          .eq('client_id', clientId)
-          .eq('code', department)
-          .single();
-        if (dept) query = query.eq('department_id', dept.id);
+        sql += ` AND de.department_id = (
+          SELECT id FROM departments WHERE client_id = $1 AND code = $2 LIMIT 1
+        )`;
+        params.push(department);
       }
 
-      const { data: entries, error } = await query;
-      if (error) throw error;
-      data = entries || [];
+      data = await db.queryRows(sql, params);
       cacheService.set(cacheKey, data, 120);
     }
 
@@ -51,27 +47,35 @@ async function getHours(req, res) {
     let data = cacheService.get(cacheKey);
 
     if (!data) {
-      let hoursQuery = supabaseAdmin
-        .from('hours_of_operation')
-        .select('day_of_week, open_time, close_time, is_closed, timezone')
-        .eq('client_id', clientId);
+      let hoursSql = `
+        SELECT day_of_week, open_time, close_time, is_closed, timezone
+        FROM hours_of_operation
+        WHERE client_id = $1
+      `;
+      const hoursParams = [clientId];
 
       if (department) {
-        const { data: dept } = await supabaseAdmin.from('departments').select('id').eq('client_id', clientId).eq('code', department).single();
-        if (dept) hoursQuery = hoursQuery.eq('department_id', dept.id);
+        hoursSql += ` AND department_id = (
+          SELECT id FROM departments WHERE client_id = $1 AND code = $2 LIMIT 1
+        )`;
+        hoursParams.push(department);
       }
 
-      const { data: hours } = await hoursQuery;
+      const [hoursResult, holidaysResult] = await Promise.all([
+        db.queryRows(hoursSql, hoursParams),
+        db.queryRows(
+          `SELECT name, date, is_closed, open_time, close_time
+           FROM holiday_exceptions WHERE client_id = $1`,
+          [clientId]
+        )
+      ]);
 
-      const { data: holidays } = await supabaseAdmin
-        .from('holiday_exceptions')
-        .select('name, date, is_closed, open_time, close_time')
-        .eq('client_id', clientId);
+      const hours = hoursResult || [];
+      const holidays = holidaysResult || [];
+      const tz = hours[0]?.timezone || 'America/New_York';
+      const status = isCurrentlyOpen(hours, holidays, timestamp, tz);
 
-      const tz = hours?.[0]?.timezone || 'America/New_York';
-      const status = isCurrentlyOpen(hours || [], holidays || [], timestamp, tz);
-
-      data = { hours: hours || [], holidays: holidays || [], currentStatus: status };
+      data = { hours, holidays, currentStatus: status };
       cacheService.set(cacheKey, data, 60);
     }
 
@@ -91,19 +95,26 @@ async function getRouting(req, res) {
     let data = cacheService.get(cacheKey);
 
     if (!data) {
-      let query = supabaseAdmin
-        .from('routing_rules')
-        .select('department_code, intent_key, condition_type, action_type, action_label, action_value, priority, is_fallback')
-        .eq('client_id', clientId)
-        .eq('is_active', true)
-        .order('priority', { ascending: false });
+      let sql = `
+        SELECT department_code, intent_key, condition_type, action_type,
+               action_label, action_value, priority, is_fallback
+        FROM routing_rules
+        WHERE client_id = $1 AND is_active = true
+      `;
+      const params = [clientId];
 
-      if (department) query = query.eq('department_code', department);
-      if (intent) query = query.eq('intent_key', intent);
+      if (department) {
+        params.push(department);
+        sql += ` AND department_code = $${params.length}`;
+      }
+      if (intent) {
+        params.push(intent);
+        sql += ` AND intent_key = $${params.length}`;
+      }
 
-      const { data: rules, error } = await query;
-      if (error) throw error;
-      data = rules || [];
+      sql += ' ORDER BY priority DESC';
+
+      data = await db.queryRows(sql, params);
       cacheService.set(cacheKey, data, 120);
     }
 
@@ -122,15 +133,20 @@ async function getContext(req, res) {
     let data = cacheService.get(cacheKey);
 
     if (!data) {
-      const [deptRes, intentRes] = await Promise.all([
-        supabaseAdmin.from('departments').select('name, code, is_default').eq('client_id', clientId).eq('is_active', true).order('display_order'),
-        supabaseAdmin.from('intents').select('intent_key, label, department_code, priority').eq('client_id', clientId).eq('is_active', true).order('priority', { ascending: false })
+      const [depts, intents] = await Promise.all([
+        db.queryRows(
+          `SELECT name, code, is_default FROM departments
+           WHERE client_id = $1 AND is_active = true ORDER BY display_order`,
+          [clientId]
+        ),
+        db.queryRows(
+          `SELECT intent_key, label, department_code, priority FROM intents
+           WHERE client_id = $1 AND is_active = true ORDER BY priority DESC`,
+          [clientId]
+        )
       ]);
 
-      data = {
-        departments: deptRes.data || [],
-        intents: intentRes.data || [],
-      };
+      data = { departments: depts, intents };
       cacheService.set(cacheKey, data, 120);
     }
 
@@ -150,21 +166,33 @@ async function getFaq(req, res) {
     let data = cacheService.get(cacheKey);
 
     if (!data) {
-      let query = supabaseAdmin
-        .from('kb_items')
-        .select('category, question, answer, department_code, intent_key, tags, priority')
-        .eq('client_id', clientId)
-        .eq('is_active', true)
-        .order('priority', { ascending: false });
+      let sql = `
+        SELECT category, question, answer, department_code, intent_key, tags, priority
+        FROM kb_items
+        WHERE client_id = $1 AND is_active = true
+      `;
+      const params = [clientId];
 
-      if (category) query = query.eq('category', category);
-      if (department) query = query.eq('department_code', department);
-      if (intent) query = query.eq('intent_key', intent);
-      if (q) query = query.or(`question.ilike.%${q}%,answer.ilike.%${q}%`);
+      if (category) {
+        params.push(category);
+        sql += ` AND category = $${params.length}`;
+      }
+      if (department) {
+        params.push(department);
+        sql += ` AND department_code = $${params.length}`;
+      }
+      if (intent) {
+        params.push(intent);
+        sql += ` AND intent_key = $${params.length}`;
+      }
+      if (q) {
+        params.push(`%${q}%`);
+        sql += ` AND (question ILIKE $${params.length} OR answer ILIKE $${params.length})`;
+      }
 
-      const { data: items, error } = await query;
-      if (error) throw error;
-      data = items || [];
+      sql += ' ORDER BY priority DESC';
+
+      data = await db.queryRows(sql, params);
       cacheService.set(cacheKey, data, 120);
     }
 
