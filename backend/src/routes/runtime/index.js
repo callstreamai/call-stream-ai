@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { runtimeAuth } = require('../middleware/auth');
-const deploymentResolve = require('./runtime/deploymentResolve');
-const clientEndpoints = require('./runtime/clientEndpoints');
+const { runtimeAuth } = require('../../middleware/auth');
+const deploymentResolve = require('./deploymentResolve');
+const clientEndpoints = require('./clientEndpoints');
 
 // All runtime routes require API token
 router.use(runtimeAuth);

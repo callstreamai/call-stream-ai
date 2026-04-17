@@ -1,19 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const { adminAuth } = require('../middleware/auth');
-const clients = require('./admin/clients');
-const departments = require('./admin/departments');
-const directory = require('./admin/directory');
-const hours = require('./admin/hours');
-const holidays = require('./admin/holidays');
-const routing = require('./admin/routing');
-const intents = require('./admin/intents');
-const kb = require('./admin/kb');
-const deployments = require('./admin/deployments');
-const imports = require('./admin/imports');
-const publish = require('./admin/publish');
-const preview = require('./admin/preview');
-const audit = require('./admin/audit');
+const { adminAuth } = require('../../middleware/auth');
+const clients = require('./clients');
+const departments = require('./departments');
+const directory = require('./directory');
+const hours = require('./hours');
+const holidays = require('./holidays');
+const routing = require('./routing');
+const intents = require('./intents');
+const kb = require('./kb');
+const deployments = require('./deployments');
+const imports = require('./imports');
+const publish = require('./publish');
+const preview = require('./preview');
+const audit = require('./audit');
 
 // All admin routes require auth
 router.use(adminAuth);

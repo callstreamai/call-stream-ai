@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { runtimeAuth } = require('../middleware/auth');
-const { supabaseAdmin } = require('../config/supabase');
-const { cacheService } = require('../services/cache');
-const { isCurrentlyOpen } = require('../utils/hours');
+const { runtimeAuth } = require('../../middleware/auth');
+const { supabaseAdmin } = require('../../config/supabase');
+const { cacheService } = require('../../services/cache');
+const { isCurrentlyOpen } = require('../../utils/hours');
 
 router.use(runtimeAuth);
 
