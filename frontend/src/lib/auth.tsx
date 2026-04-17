@@ -32,7 +32,6 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 });
 
-// Helper: race a promise against a timeout
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([
     promise,
@@ -49,11 +48,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
-      const { data, error } = await withTimeout(
-        supabase.from("users").select("*").eq("id", userId).single(),
+      const query = supabase.from("users").select("*").eq("id", userId).single();
+      const result = await withTimeout(
+        Promise.resolve(query),
         5000,
         { data: null, error: { message: "Profile fetch timed out" } } as any
       );
+      const { data, error } = result;
       if (data && !error) {
         setProfile(data as UserProfile);
       } else {
@@ -67,15 +68,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Prevent double-init in React strict mode
     if (initDone.current) return;
     initDone.current = true;
 
     let mounted = true;
 
-    // Safety net: force loading=false after 8 seconds no matter what
     const safetyTimer = setTimeout(() => {
-      if (mounted && loading) {
+      if (mounted) {
         console.warn("Auth safety timeout — forcing loading=false");
         setLoading(false);
       }
@@ -88,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           5000,
           { data: { session: null } } as any
         );
-        
+
         if (!mounted) return;
 
         const s = sessionResult?.data?.session ?? null;
@@ -107,20 +106,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     init();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, s) => {
-        if (!mounted) return;
-        setSession(s);
-        setUser(s?.user ?? null);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, s) => {
+      if (!mounted) return;
+      setSession(s);
+      setUser(s?.user ?? null);
 
-        if (s?.user) {
-          await fetchProfile(s.user.id);
-        } else {
-          setProfile(null);
-        }
-        setLoading(false);
+      if (s?.user) {
+        await fetchProfile(s.user.id);
+      } else {
+        setProfile(null);
       }
-    );
+      setLoading(false);
+    });
 
     return () => {
       mounted = false;
