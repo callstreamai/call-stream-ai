@@ -312,9 +312,12 @@ const API_SECTIONS: Section[] = [
       {
         method: "GET",
         path: "/sse",
-        description: "SSE transport — connect here for the Server-Sent Events stream. Used by remote MCP clients.",
-        auth: "none",
-        notes: "Returns an SSE stream. Client must POST JSON-RPC messages to /mcp/messages?sessionId=<id>.",
+        description: "SSE transport — connect here for the Server-Sent Events stream. Requires Bearer token authentication on the initial connection.",
+        auth: "runtime",
+        queryParams: {
+          token: { type: "string", required: false, description: "API token (alternative to Authorization header)" },
+        },
+        notes: "Auth via: Authorization: Bearer <token>, x-api-token header, or ?token= query param. Checked once at connection — all subsequent messages on the session are authenticated.",
       },
       {
         method: "POST",
@@ -408,16 +411,16 @@ const API_SECTIONS: Section[] = [
       {
         method: "GET",
         path: "Claude Desktop / Cursor (Remote SSE)",
-        description: "Add this to your Claude Desktop or Cursor MCP configuration file to connect via SSE transport.",
-        auth: "none",
+        description: "Add this to your Claude Desktop or Cursor MCP configuration file to connect via SSE transport. Authentication is required.",
+        auth: "runtime",
         response: `{
   "mcpServers": {
     "callstream": {
-      "url": "https://call-stream-ai-api.onrender.com/mcp/sse"
+      "url": "https://call-stream-ai-api.onrender.com/mcp/sse?token=<YOUR_API_TOKEN>"
     }
   }
 }`,
-        notes: "Config file location: Claude Desktop → ~/Library/Application Support/Claude/claude_desktop_config.json | Cursor → .cursor/mcp.json",
+        notes: "Config file location: Claude Desktop → ~/Library/Application Support/Claude/claude_desktop_config.json | Cursor → .cursor/mcp.json. Replace <YOUR_API_TOKEN> with your Runtime API token.",
       },
       {
         method: "GET",
@@ -446,7 +449,10 @@ const API_SECTIONS: Section[] = [
         response: `from mcp import ClientSession
 from mcp.client.sse import sse_client
 
-async with sse_client("https://call-stream-ai-api.onrender.com/mcp/sse") as (read, write):
+url = "https://call-stream-ai-api.onrender.com/mcp/sse"
+headers = {"Authorization": "Bearer <YOUR_API_TOKEN>"}
+
+async with sse_client(url, headers=headers) as (read, write):
     async with ClientSession(read, write) as session:
         await session.initialize()
         
@@ -467,7 +473,7 @@ async with sse_client("https://call-stream-ai-api.onrender.com/mcp/sse") as (rea
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 const transport = new SSEClientTransport(
-  new URL("https://call-stream-ai-api.onrender.com/mcp/sse")
+  new URL("https://call-stream-ai-api.onrender.com/mcp/sse?token=<YOUR_API_TOKEN>")
 );
 const client = new Client({ name: "my-app", version: "1.0" });
 await client.connect(transport);
