@@ -18,7 +18,11 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
-app.use(express.json({ limit: '10mb' }));
+// Skip body parsing for MCP messages endpoint (SSE transport reads raw body)
+app.use((req, res, next) => {
+  if (req.path === '/mcp/messages') return next();
+  express.json({ limit: '10mb' })(req, res, next);
+});
 app.use(morgan('combined'));
 
 // Health check
