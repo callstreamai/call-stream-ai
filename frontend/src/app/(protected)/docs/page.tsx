@@ -399,6 +399,89 @@ const API_SECTIONS: Section[] = [
         requestBody: { client_id: { type: "string", required: true, description: "Client UUID" } } },
     ],
   },
+  {
+    title: "MCP Connection Guide",
+    description:
+      "How to connect AI clients to the Call Stream AI MCP server.",
+    baseUrl: "",
+    endpoints: [
+      {
+        method: "GET",
+        path: "Claude Desktop / Cursor (Remote SSE)",
+        description: "Add this to your Claude Desktop or Cursor MCP configuration file to connect via SSE transport.",
+        auth: "none",
+        response: `{
+  "mcpServers": {
+    "callstream": {
+      "url": "https://call-stream-ai-api.onrender.com/mcp/sse"
+    }
+  }
+}`,
+        notes: "Config file location: Claude Desktop → ~/Library/Application Support/Claude/claude_desktop_config.json | Cursor → .cursor/mcp.json",
+      },
+      {
+        method: "GET",
+        path: "Claude Desktop (Local Stdio)",
+        description: "Run the MCP server locally via stdio transport for lower latency. Clone the repo first, then add this config.",
+        auth: "none",
+        response: `{
+  "mcpServers": {
+    "callstream": {
+      "command": "node",
+      "args": ["src/mcp/stdio.mjs"],
+      "cwd": "/path/to/call-stream-ai/backend",
+      "env": {
+        "SUPABASE_URL": "https://hzlimpuwcujukcexkbse.supabase.co"
+      }
+    }
+  }
+}`,
+        notes: "Requires Node.js 18+ and npm install in the backend directory. Set SUPABASE_URL to your project.",
+      },
+      {
+        method: "GET",
+        path: "Programmatic (Python MCP Client)",
+        description: "Connect from a Python application using the MCP client library.",
+        auth: "none",
+        response: `from mcp import ClientSession
+from mcp.client.sse import sse_client
+
+async with sse_client("https://call-stream-ai-api.onrender.com/mcp/sse") as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        
+        # List available tools
+        tools = await session.list_tools()
+        
+        # Call a tool
+        result = await session.call_tool("list_clients", {})
+        print(result)`,
+        notes: "Install: pip install mcp",
+      },
+      {
+        method: "GET",
+        path: "Programmatic (Node.js MCP Client)",
+        description: "Connect from a Node.js application.",
+        auth: "none",
+        response: `import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+
+const transport = new SSEClientTransport(
+  new URL("https://call-stream-ai-api.onrender.com/mcp/sse")
+);
+const client = new Client({ name: "my-app", version: "1.0" });
+await client.connect(transport);
+
+// List tools
+const { tools } = await client.listTools();
+
+// Call a tool
+const result = await client.callTool("list_clients", {});
+console.log(result);`,
+        notes: "Install: npm install @modelcontextprotocol/sdk",
+      },
+    ],
+  },
 ];
 
 function EndpointCard({ ep, baseUrl }: { ep: Endpoint; baseUrl: string }) {
