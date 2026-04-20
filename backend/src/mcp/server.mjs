@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import pg from "pg";
-
-const { Pool } = pg;
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { Pool } = require("pg");
 
 function createPool() {
   const supabaseUrl = process.env.SUPABASE_URL || "";
