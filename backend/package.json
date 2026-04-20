@@ -19,9 +19,13 @@
     "node-cache": "^5.1.2",
     "uuid": "^9.0.0",
     "express-rate-limit": "^7.1.0",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"
+  },
+  "bin": {
+    "callstream-mcp": "src/mcp/stdio.mjs"
   }
 }

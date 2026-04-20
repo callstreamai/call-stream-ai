@@ -285,6 +285,120 @@ const API_SECTIONS: Section[] = [
       },
     ],
   },
+  {
+    title: "MCP Server (Model Context Protocol)",
+    description:
+      "AI-native interface for LLMs and AI agents. Connect via SSE (remote) or stdio (local). Compatible with Claude Desktop, Cursor, and any MCP client.",
+    baseUrl: "/mcp",
+    endpoints: [
+      {
+        method: "GET",
+        path: "",
+        description: "Discovery endpoint — returns server info, available tools, resources, and connection details.",
+        auth: "none",
+        response: `{
+  "name": "call-stream-ai",
+  "version": "1.0.0",
+  "protocol": "MCP",
+  "transports": {
+    "sse": { "connect": "/mcp/sse", "messages": "/mcp/messages" },
+    "stdio": { "command": "node src/mcp/stdio.mjs" }
+  },
+  "tools": ["list_clients", "get_client", "create_client", ...],
+  "resources": ["clients://list"],
+  "prompts": ["onboard_client", "diagnose_routing"]
+}`,
+      },
+      {
+        method: "GET",
+        path: "/sse",
+        description: "SSE transport — connect here for the Server-Sent Events stream. Used by remote MCP clients.",
+        auth: "none",
+        notes: "Returns an SSE stream. Client must POST JSON-RPC messages to /mcp/messages?sessionId=<id>.",
+      },
+      {
+        method: "POST",
+        path: "/messages",
+        description: "JSON-RPC message endpoint for SSE transport. Send tool calls and receive results.",
+        auth: "none",
+        queryParams: {
+          sessionId: { type: "string", required: true, description: "Session ID from SSE connection" },
+        },
+        notes: "Body is a JSON-RPC 2.0 request. The MCP SDK handles serialization.",
+      },
+    ],
+  },
+  {
+    title: "MCP Tools Reference",
+    description:
+      "Tools available to AI agents via MCP. Each tool can be called through the SSE or stdio transport.",
+    baseUrl: "mcp://tool",
+    endpoints: [
+      { method: "POST", path: "/list_clients", description: "List all clients configured in Call Stream AI.", auth: "none" },
+      { method: "POST", path: "/get_client", description: "Get detailed information about a client by UUID or slug.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID or slug" } } },
+      { method: "POST", path: "/create_client", description: "Create a new client from a vertical template.", auth: "none",
+        requestBody: {
+          name: { type: "string", required: true, description: "Client name" },
+          vertical: { type: "string", required: true, description: "hotels_resorts | food_beverage | entertainment | recreation_wellness | travel" },
+          slug: { type: "string", required: false, description: "URL slug" },
+          timezone: { type: "string", required: false, description: "IANA timezone" },
+        } },
+      { method: "POST", path: "/list_departments", description: "List departments for a client.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID" } } },
+      { method: "POST", path: "/create_department", description: "Create a department.", auth: "none",
+        requestBody: {
+          client_id: { type: "string", required: true, description: "Client UUID" },
+          name: { type: "string", required: true, description: "Department name" },
+          code: { type: "string", required: true, description: "Unique code" },
+        } },
+      { method: "POST", path: "/get_hours", description: "Get hours of operation for a client.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID" }, department_code: { type: "string", required: false, description: "Filter by department" } } },
+      { method: "POST", path: "/get_routing_rules", description: "Get routing rules.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID" } } },
+      { method: "POST", path: "/create_routing_rule", description: "Create a routing rule.", auth: "none",
+        requestBody: {
+          client_id: { type: "string", required: true, description: "Client UUID" },
+          action_type: { type: "string", required: true, description: "info_response | transfer | escalate | voicemail" },
+          action_value: { type: "string", required: true, description: "Response text or transfer target" },
+        } },
+      { method: "POST", path: "/list_intents", description: "List recognized intents.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID" } } },
+      { method: "POST", path: "/search_kb", description: "Search the knowledge base.", auth: "none",
+        requestBody: {
+          client_id: { type: "string", required: true, description: "Client UUID" },
+          query: { type: "string", required: false, description: "Search text" },
+          category: { type: "string", required: false, description: "Category filter" },
+        } },
+      { method: "POST", path: "/add_kb_item", description: "Add a FAQ / knowledge base item.", auth: "none",
+        requestBody: {
+          client_id: { type: "string", required: true, description: "Client UUID" },
+          category: { type: "string", required: true, description: "Category" },
+          question: { type: "string", required: true, description: "Question" },
+          answer: { type: "string", required: true, description: "Answer" },
+        } },
+      { method: "POST", path: "/get_directory", description: "Get phone/extension directory.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID" } } },
+      { method: "POST", path: "/list_deployments", description: "List Brainbase deployment bindings.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID" } } },
+      { method: "POST", path: "/create_deployment_binding", description: "Bind a Brainbase deployment to a client.", auth: "none",
+        requestBody: {
+          client_id: { type: "string", required: true, description: "Client UUID" },
+          brainbase_deployment_id: { type: "string", required: true, description: "Deployment ID" },
+          channel: { type: "string", required: false, description: "voice | chat | sms | email" },
+        } },
+      { method: "POST", path: "/resolve_deployment", description: "Simulate routing resolution for a deployment.", auth: "none",
+        requestBody: {
+          deployment_id: { type: "string", required: true, description: "Brainbase deployment ID" },
+          channel: { type: "string", required: false, description: "Channel type" },
+          intent: { type: "string", required: false, description: "Intent key" },
+          department: { type: "string", required: false, description: "Department code" },
+        } },
+      { method: "POST", path: "/list_verticals", description: "List available vertical templates.", auth: "none" },
+      { method: "POST", path: "/get_audit_log", description: "Get recent audit log for a client.", auth: "none",
+        requestBody: { client_id: { type: "string", required: true, description: "Client UUID" } } },
+    ],
+  },
 ];
 
 function EndpointCard({ ep, baseUrl }: { ep: Endpoint; baseUrl: string }) {
@@ -422,7 +536,7 @@ export default function DocsPage() {
 
       {/* Connection info */}
       <div className="bg-card border border-border rounded-xl p-4 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <p className="text-xs text-[#666] mb-1">Base URL</p>
             <code className="text-sm text-cyan-400 font-mono">
@@ -439,6 +553,12 @@ export default function DocsPage() {
             <p className="text-xs text-[#666] mb-1">Admin Auth</p>
             <code className="text-xs text-cyan-300 font-mono">
               Authorization: Bearer {"<supabase_jwt>"}
+            </code>
+          </div>
+          <div>
+            <p className="text-xs text-[#666] mb-1">MCP Transport</p>
+            <code className="text-xs text-emerald-300 font-mono">
+              SSE: /mcp/sse
             </code>
           </div>
         </div>

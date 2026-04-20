@@ -53,6 +53,14 @@ app.use('/api/runtime', runtimeRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/channel', channelRoutes);
 
+
+// MCP (Model Context Protocol) server — SSE transport
+import('./mcp/sse.mjs').then(({ mountMcp }) => {
+  mountMcp(app);
+}).catch(err => {
+  console.warn('[MCP] Failed to mount MCP server:', err.message);
+});
+
 // Error handling
 app.use(errorHandler);
 

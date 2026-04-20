@@ -8,9 +8,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (mounted && !loading && !user && !session) {
@@ -19,20 +17,11 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [user, loading, session, router, mounted]);
 
-  // Before mount (SSR + first client render): always render children
-  // This prevents the loading flash since SSR can't check localStorage
-  if (!mounted) {
-    return <>{children}</>;
-  }
+  if (!mounted) return <>{children}</>;
 
-  // After mount: if still loading AND no cached session, show spinner
   if (loading) {
-    const hasCachedSession = !!localStorage.getItem("csai_auth_state");
-    if (hasCachedSession) {
-      // Cached session exists — render children while validating in background
-      return <>{children}</>;
-    }
-    // No cache, genuinely unknown — show brief spinner
+    const hasCached = typeof window !== "undefined" && !!localStorage.getItem("csai_auth_state");
+    if (hasCached) return <>{children}</>;
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-center">
@@ -43,8 +32,6 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Loaded, no user — redirect happening, show nothing
   if (!user) return null;
-
   return <>{children}</>;
 }
