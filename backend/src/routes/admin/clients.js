@@ -30,38 +30,79 @@ async function get(req, res) {
 
 async function create(req, res) {
   try {
-    const { name, vertical, slug } = req.body;
+    const { name, vertical, slug, timezone } = req.body;
 
     if (!name || !vertical) {
       return res.status(400).json({ error: { message: 'name and vertical are required' } });
     }
 
-    const clientSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    // Generate slug with dedup
+    let clientSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+    // Check if slug exists and append number if needed
+    const { data: existing } = await supabaseAdmin
+      .from('clients')
+      .select('slug')
+      .like('slug', `${clientSlug}%`);
+
+    if (existing && existing.length > 0) {
+      const existingSlugs = new Set(existing.map(e => e.slug));
+      if (existingSlugs.has(clientSlug)) {
+        let counter = 2;
+        while (existingSlugs.has(`${clientSlug}-${counter}`)) counter++;
+        clientSlug = `${clientSlug}-${counter}`;
+      }
+    }
 
     // 1. Create client
     const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
-      .insert({ name, vertical, slug: clientSlug, status: 'draft' })
+      .insert({
+        name,
+        vertical,
+        slug: clientSlug,
+        timezone: timezone || 'America/New_York',
+        status: 'draft'
+      })
       .select()
       .single();
 
-    if (clientError) throw clientError;
+    if (clientError) {
+      console.error('Client insert error:', clientError);
+      if (clientError.code === '23505') {
+        return res.status(409).json({ error: { message: `Client slug "${clientSlug}" already exists` } });
+      }
+      throw clientError;
+    }
 
     // 2. Clone vertical template
-    const { data: template } = await supabaseAdmin
-      .from('vertical_templates')
-      .select('id')
-      .eq('vertical', vertical)
-      .single();
+    try {
+      const { data: template, error: templateError } = await supabaseAdmin
+        .from('vertical_templates')
+        .select('id')
+        .eq('vertical', vertical)
+        .single();
 
-    if (template) {
-      await cloneTemplate(template.id, client.id);
+      if (templateError) {
+        console.error('Template lookup error:', templateError);
+      }
+
+      if (template) {
+        await cloneTemplate(template.id, client.id);
+        console.log(`Template cloned for ${client.slug} (vertical: ${vertical})`);
+      } else {
+        console.warn(`No template found for vertical: ${vertical}`);
+      }
+    } catch (tmplErr) {
+      // Template clone failure shouldn't block client creation
+      console.error('Template clone error (non-fatal):', tmplErr.message);
     }
 
     res.status(201).json(client);
   } catch (err) {
     console.error('Client creation error:', err);
-    res.status(500).json({ error: { message: err.message } });
+    const status = err.code === '23505' ? 409 : 500;
+    res.status(status).json({ error: { message: err.message || 'Failed to create client' } });
   }
 }
 

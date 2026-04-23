@@ -17,13 +17,14 @@ export default function CreateClientPage() {
   const [vertical, setVertical] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [timezone, setTimezone] = useState('America/New_York');
 
   const handleCreate = async () => {
     if (!name || !vertical) { setError('Name and vertical are required'); return; }
     setCreating(true);
     setError('');
     try {
-      const client = await api.createClient({ name, vertical });
+      const client = await api.createClient({ name, vertical, timezone });
       router.push(`/clients/${client.id}`);
     } catch (err: any) {
       setError(err.message || 'Failed to create client');
@@ -65,6 +66,29 @@ export default function CreateClientPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-2">Timezone</label>
+          <select
+            value={timezone}
+            onChange={e => setTimezone(e.target.value)}
+            className="w-full bg-black border border-border rounded-lg px-4 py-3"
+          >
+            <option value="America/New_York">Eastern (America/New_York)</option>
+            <option value="America/Chicago">Central (America/Chicago)</option>
+            <option value="America/Denver">Mountain (America/Denver)</option>
+            <option value="America/Los_Angeles">Pacific (America/Los_Angeles)</option>
+            <option value="America/Anchorage">Alaska (America/Anchorage)</option>
+            <option value="Pacific/Honolulu">Hawaii (Pacific/Honolulu)</option>
+            <option value="America/Phoenix">Arizona (America/Phoenix)</option>
+            <option value="America/Puerto_Rico">Atlantic (America/Puerto_Rico)</option>
+            <option value="Europe/London">London (Europe/London)</option>
+            <option value="Europe/Paris">Paris (Europe/Paris)</option>
+            <option value="Asia/Dubai">Dubai (Asia/Dubai)</option>
+            <option value="Asia/Tokyo">Tokyo (Asia/Tokyo)</option>
+            <option value="Australia/Sydney">Sydney (Australia/Sydney)</option>
+          </select>
         </div>
 
         {error && <p className="text-danger text-sm">{error}</p>}
