@@ -109,6 +109,50 @@ const API_SECTIONS: Section[] = [
         auth: "runtime",
         response: `{ "clientId": "...", "items": [{ "category": "...", "question": "...", "answer": "...", "department_code": "...", "intent_key": "..." }] }`,
       },
+      {
+        method: "GET",
+        path: "/:clientId/now",
+        description: "Real-time operating status. Returns the current local time, day of week, open/closed status, holiday exceptions, and hours for the client's timezone. This is a COMPUTE endpoint — it calculates the answer live on every call.",
+        auth: "runtime",
+        queryParams: {
+          department: { type: "string", required: false, description: "Filter to specific department code" },
+          check_all: { type: "string", required: false, description: "Set to 'true' to return status for all departments" },
+        },
+        response: `{
+  "client_id": "6f973e20-...",
+  "client_name": "The Grand Hotel",
+  "timezone": "America/New_York",
+  "local": {
+    "date": "2026-04-23",
+    "time": "2:32:05 PM",
+    "time_short": "2:32 PM",
+    "day_of_week": 4,
+    "day_name": "Thursday",
+    "is_weekend": false
+  },
+  "utc": {
+    "timestamp": "2026-04-23T18:32:05.000Z",
+    "offset": "-04:00"
+  },
+  "status": {
+    "is_open": true,
+    "summary": "Open",
+    "reason": "Within operating hours",
+    "is_holiday": false,
+    "holiday_name": null
+  },
+  "departments": [{
+    "department": "Front Desk",
+    "department_code": "front_desk",
+    "is_open": true,
+    "status": "open",
+    "reason": "Within operating hours",
+    "hours_today": { "open": "00:00", "close": "23:59" },
+    "minutes_until_change": 327,
+    "time_until_change": "5h 27m"
+  }]
+}`,
+      },
     ],
   },
   {
@@ -389,6 +433,12 @@ const API_SECTIONS: Section[] = [
           client_id: { type: "string", required: true, description: "Client UUID" },
           brainbase_deployment_id: { type: "string", required: true, description: "Deployment ID" },
           channel: { type: "string", required: false, description: "voice | chat | sms | email" },
+        } },
+      { method: "POST", path: "/check_operating_status", description: "Get current local time, day of week, and real-time open/closed status for a client. Returns timezone-aware results with holiday checking.", auth: "none",
+        requestBody: {
+          client_id: { type: "string", required: true, description: "Client UUID" },
+          department_code: { type: "string", required: false, description: "Specific department to check" },
+          check_all: { type: "boolean", required: false, description: "Return all departments" },
         } },
       { method: "POST", path: "/resolve_deployment", description: "Simulate routing resolution for a deployment.", auth: "none",
         requestBody: {

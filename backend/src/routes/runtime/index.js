@@ -3,12 +3,16 @@ const router = express.Router();
 const { runtimeAuth } = require('../../middleware/auth');
 const deploymentResolve = require('./deploymentResolve');
 const clientEndpoints = require('./clientEndpoints');
+const { getOperatingStatus } = require('./operatingStatus');
 
 // All runtime routes require API token
 router.use(runtimeAuth);
 
 // Primary endpoint - deployment resolution
 router.post('/deployment-resolve', deploymentResolve.resolve);
+
+// Real-time operating status (timezone-aware)
+router.get('/:clientId/now', getOperatingStatus);
 
 // Supporting endpoints
 router.get('/:clientId/directory', clientEndpoints.getDirectory);

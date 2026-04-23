@@ -356,6 +356,103 @@ export function createMcpServer() {
 
   // ── Verticals ──
 
+
+  server.tool(
+    "check_operating_status",
+    "Get the current local time, day of week, and real-time open/closed status for a client location. Use this when you need to know if a business is currently open, what time it is locally, or whether today is a holiday.",
+    {
+      client_id: z.string().describe("Client UUID"),
+      department_code: z.string().optional().describe("Specific department to check (default: checks the default department)"),
+      check_all: z.boolean().optional().describe("Return status for ALL departments"),
+    },
+    async ({ client_id, department_code, check_all }) => {
+      // 1. Get client timezone
+      const clientRes = await pool.query(
+        "SELECT id, name, slug, timezone, status FROM clients WHERE id = $1", [client_id]
+      );
+      if (!clientRes.rows[0]) return { content: [{ type: "text", text: "Client not found" }], isError: true };
+
+      const client = clientRes.rows[0];
+      const tz = client.timezone || "America/New_York";
+
+      // 2. Compute local time
+      const nowUtc = new Date();
+      const localStr = nowUtc.toLocaleString("en-US", { timeZone: tz });
+      const localDate = new Date(localStr);
+      const localTime = nowUtc.toLocaleTimeString("en-US", { timeZone: tz, hour12: true });
+      const localTimeShort = nowUtc.toLocaleTimeString("en-US", { timeZone: tz, hour12: true, hour: "numeric", minute: "2-digit" });
+      const localDateStr = nowUtc.toLocaleDateString("en-CA", { timeZone: tz });
+      const dow = localDate.getDay();
+      const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+      // 3. Check holidays
+      const holidays = (await pool.query(
+        "SELECT h.name, h.is_closed, h.open_time, h.close_time, d.code as dept FROM holiday_exceptions h LEFT JOIN departments d ON h.department_id = d.id WHERE h.client_id = $1 AND h.date = $2::date",
+        [client_id, localDateStr]
+      )).rows;
+
+      // 4. Get hours for today
+      let hoursQ = "SELECT h.open_time, h.close_time, h.is_closed, d.name as dept_name, d.code as dept_code, d.is_default FROM hours_of_operation h LEFT JOIN departments d ON h.department_id = d.id WHERE h.client_id = $1 AND h.day_of_week = $2";
+      const params = [client_id, dow];
+      if (department_code && !check_all) { params.push(department_code); hoursQ += " AND d.code = $" + params.length; }
+      hoursQ += " ORDER BY d.is_default DESC, d.display_order";
+
+      const hours = (await pool.query(hoursQ, params)).rows;
+      const currentMin = localDate.getHours() * 60 + localDate.getMinutes();
+
+      const depts = hours.map(row => {
+        const hol = holidays.find(h => !h.dept || h.dept === row.dept_code);
+        let isOpen = false, reason = "";
+        if (hol) {
+          if (hol.is_closed) { isOpen = false; reason = "Closed for " + hol.name; }
+          else if (hol.open_time && hol.close_time) {
+            const [oh,om] = hol.open_time.substring(0,5).split(":").map(Number);
+            const [ch,cm] = hol.close_time.substring(0,5).split(":").map(Number);
+            isOpen = currentMin >= oh*60+om && currentMin < ch*60+cm;
+            reason = "Holiday hours (" + hol.name + ")";
+          }
+        } else if (row.is_closed) {
+          isOpen = false; reason = "Closed on " + days[dow];
+        } else {
+          const [oh,om] = row.open_time.substring(0,5).split(":").map(Number);
+          const [ch,cm] = row.close_time.substring(0,5).split(":").map(Number);
+          const openMin = oh*60+om, closeMin = ch*60+cm;
+          isOpen = closeMin <= openMin
+            ? (currentMin >= openMin || currentMin < closeMin)
+            : (currentMin >= openMin && currentMin < closeMin);
+          reason = isOpen ? "Within operating hours" : "Outside operating hours";
+        }
+        return {
+          department: row.dept_name || "Default",
+          code: row.dept_code || "default",
+          is_open: isOpen,
+          status: isOpen ? "OPEN" : "CLOSED",
+          reason: reason,
+          hours: row.is_closed ? "Closed today" : row.open_time.substring(0,5) + " - " + row.close_time.substring(0,5),
+        };
+      });
+
+      const primary = depts.find(d => d.code === (department_code || null)) || depts[0];
+
+      const result = {
+        client: client.name,
+        timezone: tz,
+        local_time: localTimeShort,
+        local_date: localDateStr,
+        day_of_week: days[dow],
+        is_weekend: dow === 0 || dow === 6,
+        is_holiday: holidays.length > 0,
+        holiday_name: holidays.length > 0 ? holidays[0].name : null,
+        status: primary ? primary.status : "UNKNOWN",
+        is_open: primary ? primary.is_open : false,
+        reason: primary ? primary.reason : "No hours configured",
+        departments: check_all ? depts : undefined,
+      };
+
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
   server.tool(
     "list_verticals",
     "List available vertical templates for creating new clients",
