@@ -1,4 +1,4 @@
-const { getPool } = require('../../config/db');
+const { pool } = require('../../config/db');
 
 /**
  * GET /api/runtime/:clientId/now
@@ -16,7 +16,7 @@ async function getOperatingStatus(req, res) {
   const departmentFilter = req.query.department || null;
   const checkAll = req.query.check_all === 'true';
 
-  const pool = getPool();
+  // pool already imported from config/db
 
   try {
     // 1. Look up client and timezone
